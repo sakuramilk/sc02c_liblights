@@ -79,7 +79,7 @@ char const*const KEYBOARD_FILE
         = "/sys/class/leds/keyboard-backlight/brightness";
 
 char const*const BUTTON_FILE
-        = "/sys/devices/virtual/misc/melfas_touchkey/brightness";
+        = "/sys/class/misc/melfas_touchkey/brightness";
 
 // sysfs file for BLN
 char const*const NOTIFICATION_FILE
@@ -417,7 +417,7 @@ const struct hw_module_t HAL_MODULE_INFO_SYM = {
     .version_major = 1,
     .version_minor = 0,
     .id = LIGHTS_HARDWARE_MODULE_ID,
-    .name = "Modified QCT MSM7K lights Module",
+    .name = "SC-02C QCT MSM7K lights Module",
     .author = "creams@nexus",
     .methods = &lights_module_methods,
 };
