@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2008 The Android Open Source Project
+ * Copyright (C) 2011 sakuramilk <c.sakuramilk@gmail.com>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,9 +15,8 @@
  * limitations under the License.
  */
 
-
-// #define LOG_NDEBUG 0
 #define LOG_TAG "lights"
+#define LOG_NDEBUG 0
 
 #include <cutils/log.h>
 
@@ -40,10 +40,15 @@ static struct light_state_t g_notification;
 static int g_backlight = 255;
 static int g_buttons = 0;
 
+/* GENERIC_BLN */
 #define BLN_LIGHT_ON    (1)
 #define BLN_LIGHT_OFF   (2)
 #define BLN_NOTIFY_ON   (1)
 #define BLN_NOTIFY_OFF  (0)
+
+/* CM7 LED NOTIFICATIONS BACKLIGHT */
+#define ENABLE_BL             1
+#define DISABLE_BL            2
 
 char const*const LCD_FILE
         = "/sys/class/backlight/pwm-backlight/brightness";
@@ -67,17 +72,16 @@ void init_globals(void)
     pthread_mutex_init(&g_lock, NULL);
 }
 
-static int
-write_int(char const* path, int value)
+static int write_int(char const *path, int value)
 {
     int fd;
     static int already_warned = 0;
 
+    LOGV("write_int : path %s, value %d", path, value);
     fd = open(path, O_RDWR);
     if (fd >= 0) {
         char buffer[20];
         int bytes = sprintf(buffer, "%d\n", value);
-        LOGV("write_int : %s %d\n", path, value);
         int amt = write(fd, buffer, bytes);
         close(fd);
         return amt == -1 ? -errno : 0;
@@ -90,23 +94,19 @@ write_int(char const* path, int value)
     }
 }
 
-static int
-is_lit(struct light_state_t const* state)
+static int is_lit(struct light_state_t const *state)
 {
-    return state->color & 0x00ffffff;
+    return state->color & 0xffffffff;
 }
 
-static int
-rgb_to_brightness(struct light_state_t const* state)
+static int rgb_to_brightness(struct light_state_t const *state)
 {
     int color = state->color & 0x00ffffff;
-    return ((77*((color>>16)&0x00ff))
-            + (150*((color>>8)&0x00ff)) + (29*(color&0x00ff))) >> 8;
+    return ((77*((color>>16) & 0x00ff))
+            + (150*((color>>8) & 0x00ff)) + (29*(color & 0x00ff))) >> 8;
 }
 
-static int
-set_light_backlight(struct light_device_t* dev,
-        struct light_state_t const* state)
+static int set_light_backlight(struct light_device_t *dev, struct light_state_t const *state)
 {
     int err = 0;
     int brightness = rgb_to_brightness(state);
@@ -117,9 +117,7 @@ set_light_backlight(struct light_device_t* dev,
     return err;
 }
 
-static int
-set_light_buttons(struct light_device_t* dev,
-        struct light_state_t const* state)
+static int set_light_buttons(struct light_device_t *dev, struct light_state_t const *state)
 {
     int err = 0;
     int on = is_lit(state);
@@ -133,9 +131,7 @@ set_light_buttons(struct light_device_t* dev,
     return err;
 }
 
-static int
-set_light_notifications(struct light_device_t* dev,
-        struct light_state_t const* state)
+static int set_light_notifications(struct light_device_t *dev, struct light_state_t const *state)
 {
     pthread_mutex_lock(&g_lock);
     g_notification = *state;
@@ -145,18 +141,30 @@ set_light_notifications(struct light_device_t* dev,
                     BLN_NOTIFY_ON :
                     BLN_NOTIFY_OFF);
 
+
+    int brightness = rgb_to_brightness(state);
+        
+    if (brightness+state->color == 0 || brightness > 100 ) {
+        if (state->color & 0x00ffffff) {
+            LOGV("[LED Notify] set_light_notifications - ENABLE_BL\n");
+            err = write_int (NOTIFICATION_FILE, ENABLE_BL);
+        } else {
+            LOGV("[LED Notify] set_light_notifications - DISABLE_BL\n");
+            err = write_int (NOTIFICATION_FILE, DISABLE_BL);
+        }
+    }
+
     pthread_mutex_unlock(&g_lock);
 
     return 0;
 }
 
-/** Close the lights device */
-static int
-close_lights(struct light_device_t *dev)
+static int close_lights(struct light_device_t *dev)
 {
-    if (dev) {
+    LOGV("close_light is called");
+    if (dev)
         free(dev);
-    }
+
     return 0;
 }
 
@@ -174,7 +182,6 @@ static int open_lights(const struct hw_module_t* module, char const* name,
     int (*set_light)(struct light_device_t* dev,
             struct light_state_t const* state);
 
-    /* for BLN test */
     LOGE("CMD name =>%s\n", name);
 
     if (0 == strcmp(LIGHT_ID_BACKLIGHT, name)) {
@@ -204,7 +211,6 @@ static int open_lights(const struct hw_module_t* module, char const* name,
     *device = (struct hw_device_t*)dev;
     return 0;
 }
-
 
 static struct hw_module_methods_t lights_module_methods = {
     .open =  open_lights,
