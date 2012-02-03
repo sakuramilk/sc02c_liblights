@@ -47,8 +47,8 @@ static int g_buttons = 0;
 #define BLN_NOTIFY_OFF  (0)
 
 /* CM7 LED NOTIFICATIONS BACKLIGHT */
-#define ENABLE_BL             1
-#define DISABLE_BL            2
+#define CM7_ENABLE_BL   (1)
+#define CM7_DISABLE_BL  (2)
 
 char const*const LCD_FILE
         = "/sys/class/backlight/pwm-backlight/brightness";
@@ -61,6 +61,9 @@ char const*const BUTTON_FILE
 
 char const*const NOTIFICATION_FILE
         = "/sys/class/misc/backlightnotification/notification_led";
+
+char const*const CM7_NOTIFICATION_FILE
+        = "/sys/class/misc/notification/led";
 
 /**
  * device methods
@@ -134,6 +137,7 @@ static int set_light_buttons(struct light_device_t *dev, struct light_state_t co
 static int set_light_notifications(struct light_device_t *dev, struct light_state_t const *state)
 {
     pthread_mutex_lock(&g_lock);
+
     g_notification = *state;
     LOGE("set_light_notifications color=0x%08x", state->color);
 
@@ -141,16 +145,15 @@ static int set_light_notifications(struct light_device_t *dev, struct light_stat
                     BLN_NOTIFY_ON :
                     BLN_NOTIFY_OFF);
 
-
     int brightness = rgb_to_brightness(state);
         
     if (brightness+state->color == 0 || brightness > 100 ) {
         if (state->color & 0x00ffffff) {
             LOGV("[LED Notify] set_light_notifications - ENABLE_BL\n");
-            err = write_int (NOTIFICATION_FILE, ENABLE_BL);
+            err = write_int (CM7_NOTIFICATION_FILE, CM7_ENABLE_BL);
         } else {
             LOGV("[LED Notify] set_light_notifications - DISABLE_BL\n");
-            err = write_int (NOTIFICATION_FILE, DISABLE_BL);
+            err = write_int (CM7_NOTIFICATION_FILE, CM7_DISABLE_BL);
         }
     }
 
