@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2008 The Android Open Source Project
+ * Copyright (C) 2011 The Android Open Source Project
+ * Copyright (C) 2011 The CyanogenMod Project
  * Copyright (C) 2011 sakuramilk <c.sakuramilk@gmail.com>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,6 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 
 #define LOG_TAG "lights"
 #define LOG_NDEBUG 0
@@ -36,38 +38,38 @@
 
 static pthread_once_t g_init = PTHREAD_ONCE_INIT;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
-static struct light_state_t g_notification;
-static int g_backlight = 255;
-static int g_buttons = 0;
+static int g_enable_touchlight = -1;
+
+#define LIGHT_ON    (1)
+#define LIGHT_OFF   (2)
 
 /* GENERIC_BLN */
-#define BLN_LIGHT_ON    (1)
-#define BLN_LIGHT_OFF   (2)
-#define BLN_NOTIFY_ON   (1)
-#define BLN_NOTIFY_OFF  (0)
+#define GENERIC_BLN_NOTIFY_ON   (1)
+#define GENERIC_BLN_NOTIFY_OFF  (0)
 
-/* CM7 LED NOTIFICATIONS BACKLIGHT */
-#define CM7_ENABLE_BL   (1)
-#define CM7_DISABLE_BL  (2)
+/* CM LED NOTIFICATIONS BACKLIGHT */
+#define CM_BLN_ENABLE_BL   (1)
+#define CM_BLN_DISABLE_BL  (2)
 
-char const*const LCD_FILE
-        = "/sys/class/backlight/pwm-backlight/brightness";
+#ifdef EXYNOS4210_TABLET
+char const*const PANEL_FILE
+        = "/sys/class/backlight/backlight/brightness";
+#else
+char const*const PANEL_FILE
+        = "/sys/class/backlight/panel/brightness";
 
-char const*const KEYBOARD_FILE
-        = "/sys/class/leds/keyboard-backlight/brightness";
+char const*const BUTTON_POWER
+        = "/sys/class/sec/sec_touchkey/enable_disable";
 
 char const*const BUTTON_FILE
-        = "/sys/class/misc/melfas_touchkey/brightness";
+        = "/sys/class/sec/sec_touchkey/brightness";
 
-char const*const NOTIFICATION_FILE
+char const*const GENERIC_NOTIFICATION_FILE
         = "/sys/class/misc/backlightnotification/notification_led";
 
-char const*const CM7_NOTIFICATION_FILE
+char const*const CM_NOTIFICATION_FILE
         = "/sys/class/misc/notification/led";
-
-/**
- * device methods
- */
+#endif
 
 void init_globals(void)
 {
@@ -75,7 +77,25 @@ void init_globals(void)
     pthread_mutex_init(&g_lock, NULL);
 }
 
-static int write_int(char const *path, int value)
+void
+load_settings()
+{
+    FILE* fp = fopen("/data/.disable_touchlight", "r");
+    if (!fp) {
+        g_enable_touchlight = 1;
+    } else {
+        g_enable_touchlight = (int)(fgetc(fp));
+        if (g_enable_touchlight == '1')
+            g_enable_touchlight = 1;
+        else
+            g_enable_touchlight = 0;
+
+        fclose(fp);
+    }
+}
+
+static int
+write_int(char const* path, int value)
 {
     int fd;
     static int already_warned = 0;
@@ -97,63 +117,97 @@ static int write_int(char const *path, int value)
     }
 }
 
-static int is_lit(struct light_state_t const *state)
+static int
+is_lit(struct light_state_t const* state)
 {
     return state->color & 0xffffffff;
 }
 
-static int rgb_to_brightness(struct light_state_t const *state)
+static int
+rgb_to_brightness(struct light_state_t const* state)
 {
     int color = state->color & 0x00ffffff;
-    return ((77*((color>>16) & 0x00ff))
-            + (150*((color>>8) & 0x00ff)) + (29*(color & 0x00ff))) >> 8;
+    return ((77*((color>>16)&0x00ff))
+            + (150*((color>>8)&0x00ff)) + (29*(color&0x00ff))) >> 8;
 }
 
-static int set_light_backlight(struct light_device_t *dev, struct light_state_t const *state)
+static int
+set_light_backlight(struct light_device_t* dev,
+        struct light_state_t const* state)
 {
+    load_settings();
+
     int err = 0;
     int brightness = rgb_to_brightness(state);
+
     pthread_mutex_lock(&g_lock);
-    g_backlight = brightness;
-    err = write_int(LCD_FILE, brightness);
+    err = write_int(PANEL_FILE, brightness);
+
+#ifndef EXYNOS4210_TABLET
+    if (g_enable_touchlight == -1 || g_enable_touchlight > 0)
+	LOGD("set_light_backlight on=%d\n", brightness > 0 ? LIGHT_ON : LIGHT_OFF);
+        err = write_int(BUTTON_FILE, brightness > 0 ? LIGHT_ON : LIGHT_OFF);
+#endif
+
     pthread_mutex_unlock(&g_lock);
+
     return err;
 }
 
-static int set_light_buttons(struct light_device_t *dev, struct light_state_t const *state)
+static int
+set_light_keyboard(struct light_device_t* dev,
+        struct light_state_t const* state)
 {
+    return 0;
+}
+
+static int
+set_light_buttons(struct light_device_t* dev,
+        struct light_state_t const* state)
+{
+#ifdef EXYNOS4210_TABLET
+    return 0;
+#else
     int err = 0;
     int on = is_lit(state);
+
     pthread_mutex_lock(&g_lock);
-    g_buttons = on;
-    /* for BLN 1(on) or 2(off) */
-    err = write_int(BUTTON_FILE, on ?
-        BLN_LIGHT_ON :
-        BLN_LIGHT_OFF);
+    LOGD("set_light_button on=%d\n", (on == 1) ? LIGHT_ON : LIGHT_OFF);
+    err = write_int(BUTTON_FILE, (on == 1) ? LIGHT_ON : LIGHT_OFF);
     pthread_mutex_unlock(&g_lock);
+
     return err;
+#endif
 }
 
-static int set_light_notifications(struct light_device_t *dev, struct light_state_t const *state)
+static int
+set_light_battery(struct light_device_t* dev,
+        struct light_state_t const* state)
+{
+    return 0;
+}
+
+static int
+set_light_notification(struct light_device_t* dev,
+        struct light_state_t const* state)
 {
     pthread_mutex_lock(&g_lock);
 
-    g_notification = *state;
     LOGE("set_light_notifications color=0x%08x", state->color);
 
-    int err = write_int( NOTIFICATION_FILE, is_lit(state) ?
-                    BLN_NOTIFY_ON :
-                    BLN_NOTIFY_OFF);
+    int err = write_int( GENERIC_NOTIFICATION_FILE, is_lit(state) ?
+                    GENERIC_BLN_NOTIFY_ON :
+                    GENERIC_BLN_NOTIFY_OFF);
 
     int brightness = rgb_to_brightness(state);
         
     if (brightness+state->color == 0 || brightness > 100 ) {
         if (state->color & 0x00ffffff) {
             LOGV("[LED Notify] set_light_notifications - ENABLE_BL\n");
-            err = write_int (CM7_NOTIFICATION_FILE, CM7_ENABLE_BL);
+            err = write_int (CM_NOTIFICATION_FILE, CM_BLN_ENABLE_BL);
         } else {
             LOGV("[LED Notify] set_light_notifications - DISABLE_BL\n");
-            err = write_int (CM7_NOTIFICATION_FILE, CM7_DISABLE_BL);
+            err = write_int (CM_NOTIFICATION_FILE, CM_BLN_DISABLE_BL);
         }
     }
 
@@ -162,23 +216,24 @@ static int set_light_notifications(struct light_device_t *dev, struct light_stat
     return 0;
 }
 
-static int close_lights(struct light_device_t *dev)
+static int
+set_light_attention(struct light_device_t* dev,
+        struct light_state_t const* state)
 {
-    LOGV("close_light is called");
-    if (dev)
-        free(dev);
+    return 0;
+}
 
+static int
+close_lights(struct light_device_t *dev)
+{
+    if (dev) {
+        free(dev);
+    }
     return 0;
 }
 
 
 /******************************************************************************/
-
-/**
- * module methods
- */
-
-/** Open a new instance of a lights device using name */
 static int open_lights(const struct hw_module_t* module, char const* name,
         struct hw_device_t** device)
 {
@@ -190,11 +245,20 @@ static int open_lights(const struct hw_module_t* module, char const* name,
     if (0 == strcmp(LIGHT_ID_BACKLIGHT, name)) {
         set_light = set_light_backlight;
     }
+    else if (0 == strcmp(LIGHT_ID_KEYBOARD, name)) {
+        set_light = set_light_keyboard;
+    }
     else if (0 == strcmp(LIGHT_ID_BUTTONS, name)) {
         set_light = set_light_buttons;
     }
+    else if (0 == strcmp(LIGHT_ID_BATTERY, name)) {
+        set_light = set_light_battery;
+    }
     else if (0 == strcmp(LIGHT_ID_NOTIFICATIONS, name)) {
-        set_light = set_light_notifications;
+        set_light = set_light_notification;
+    }
+    else if (0 == strcmp(LIGHT_ID_ATTENTION, name)) {
+        set_light = set_light_attention;
     }
     else {
         return -EINVAL;
@@ -215,19 +279,17 @@ static int open_lights(const struct hw_module_t* module, char const* name,
     return 0;
 }
 
+
 static struct hw_module_methods_t lights_module_methods = {
     .open =  open_lights,
 };
 
-/*
- * The lights Module
- */
 const struct hw_module_t HAL_MODULE_INFO_SYM = {
     .tag = HARDWARE_MODULE_TAG,
     .version_major = 1,
     .version_minor = 0,
     .id = LIGHTS_HARDWARE_MODULE_ID,
-    .name = "SC-02C lights Module",
-    .author = "sakuramilk",
+    .name = "Samsung Exynos4210 Lights Module",
+    .author = "sakuramilk <c.sakuramilk@gmail.com>",
     .methods = &lights_module_methods,
 };
